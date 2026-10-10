@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<!--
+  GhostLimit — pagina de activacion ESTATICA (un solo archivo, sin dependencias).
+
+  Por que existe: con varias cuentas de Google abiertas, la web de Apps Script falla con
+  "No se pudo abrir el archivo en este momento" (Google reescribe /macros/s/ a /macros/u/N/s/).
+  Esta pagina vive fuera de Google (GitHub Pages u otro hosting estatico) y habla con la aplicacion
+  por su API JSON con fetch(..., {credentials: 'omit'}): sin cookies, la multicuenta no le afecta.
+
+    ?s=<sesion de Stripe>  vuelta del pago: confirma la compra y ofrece activar
+    ?t=<token>             enlace "Activa tu licencia" del correo: formulario directo
+
+  Al publicarla: rellenar la constante URL_APP (en el script, al final) con la URL de la aplicacion
+  (termina en /exec).
+  Pasos: venta/PASOS_CONFIGURACION.txt, seccion "Pagina de activacion sin problemas de cuentas de Google".
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>GhostLimit · Activa tu licencia</title>
+<style>
+  :root { --fondo: #0b0f14; --tarjeta: #121820; --borde: #232c37; --texto: #e6edf3; --tenue: #8b97a5;
+          --oro: #f5a524; --oro-osc: #c98512; --ok: #4cc38a; --mal: #ff6b5e; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { background: var(--fondo); }
+  body { margin: 0; min-height: 100vh; padding: 28px 16px 40px; color: var(--texto);
+         font: 16px/1.55 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+         background: radial-gradient(1200px 600px at 10% -10%, #1a2230 0%, var(--fondo) 60%) fixed; }
+  .tarjeta { max-width: 580px; margin: 0 auto; background: var(--tarjeta); border: 1px solid var(--borde);
+             border-radius: 14px; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .45); }
+  .marca { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--borde); }
+  .logo { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+          font-weight: 800; color: #10161c; background: linear-gradient(135deg, var(--oro), #e8892a 55%, #4b7bd6); }
+  .marca b { font-size: 18px; letter-spacing: .3px; }
+  .marca span.sub { color: var(--tenue); font-size: 14px; }
+  .cuerpo { padding: 22px; }
+  h1 { font-size: 23px; margin: 0 0 12px; }
+  h2 { font-size: 18px; margin: 22px 0 6px; color: var(--oro); }
+  p { margin: 0 0 14px; }
+  .nota { font-size: 14px; color: var(--tenue); }
+  .ok { color: var(--ok); font-weight: 600; }
+  .mal { color: var(--mal); font-weight: 600; }
+  label.campo { display: block; font-weight: 700; margin-bottom: 4px; }
+  input[type=text] { width: 100%; font: 16px Consolas, "Courier New", monospace; padding: 12px; color: var(--texto);
+                     background: #0b1016; border: 1px solid #364250; border-radius: 8px; text-transform: uppercase; }
+  input[type=text]:focus, textarea:focus { outline: 2px solid var(--oro); outline-offset: 1px; }
+  .casilla { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin: 4px 0 16px; cursor: pointer; }
+  .casilla input { margin-top: 4px; accent-color: var(--oro); }
+  .btn { display: inline-block; font: 700 16px "Segoe UI", system-ui, sans-serif; padding: 12px 22px; border-radius: 8px;
+         border: 0; cursor: pointer; color: #10161c; background: var(--oro); margin: 0 8px 8px 0; }
+  .btn:hover { background: #ffb53f; }
+  .btn[disabled] { opacity: .6; cursor: wait; }
+  .btn.sec { background: transparent; color: var(--oro); border: 1px solid var(--oro-osc); }
+  textarea { width: 100%; height: 120px; resize: vertical; padding: 10px; color: var(--texto); background: #0b1016;
+             border: 1px solid #364250; border-radius: 8px; font: 12px Consolas, "Courier New", monospace; word-break: break-all; }
+  .girando { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--borde); border-top-color: var(--oro);
+             border-radius: 50%; vertical-align: -3px; margin-right: 8px; animation: g 0.9s linear infinite; }
+  @keyframes g { to { transform: rotate(360deg); } }
+  .pie { padding: 16px 22px 20px; border-top: 1px solid var(--borde); font-size: 13px; color: var(--tenue); }
+  .pie a { color: var(--oro); }
+  .riesgo { font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main class="tarjeta">
+  <div class="marca"><span class="logo">G</span><b>GhostLimit</b><span class="sub">· NinjaTrader 8</span></div>
+  <div class="cuerpo">
+
+    <section id="cargando">
+      <p><span class="girando"></span><span id="cargando-texto">Cargando…</span></p>
+    </section>
+
+    <section id="aviso" hidden>
+      <h1 id="aviso-titulo"></h1>
+      <p id="aviso-texto"></p>
+    </section>
+
+    <section id="activar" hidden>
+      <h1 id="activar-titulo">Activa tu licencia</h1>
+      <p id="activar-intro" class="ok" hidden></p>
+      <h2 id="activar-sub" hidden>Activa tu licencia</h2>
+      <form id="formulario" novalidate>
+        <label class="campo" for="id">ID de tu computadora</label>
+        <p class="nota">Abre el asistente de GhostLimit, página «Tu licencia», pulsa «Copiar ID» y pégalo aquí
+          (o cópialo del aviso rojo de GhostLimit en el gráfico).</p>
+        <input type="text" id="id" autocomplete="off" spellcheck="false" autocapitalize="characters"
+               placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX">
+        <p class="nota" id="eco">&nbsp;</p>
+        <label class="casilla"><input type="checkbox" id="confirmo">
+          <span>Es el ID de la computadora donde voy a usar GhostLimit (la licencia queda ligada a ella y gasta
+          una activación).</span></label>
+        <p class="mal" id="error-form" hidden></p>
+        <button class="btn" id="generar" type="submit">Generar mi licencia</button>
+      </form>
+      <p class="nota" id="activar-despues" hidden>Si todavía no tienes el asistente abierto, no pasa nada: el mismo
+        enlace viene en el correo de tu compra.</p>
+    </section>
+
+    <section id="licencia" hidden>
+      <h1>Tu licencia está lista</h1>
+      <p class="ok" id="licencia-para"></p>
+      <textarea id="clave" readonly></textarea>
+      <p style="margin-top:12px">
+        <button class="btn" id="copiar" type="button">Copiar clave</button>
+        <button class="btn sec" id="descargar" type="button">Descargar licencia.ghostlimit</button>
+      </p>
+      <p>En el asistente, página «Tu licencia»: pulsa «Pegar» (o «Importar archivo…» con
+        <b>licencia.ghostlimit</b>) y luego «Comprobar clave». Verás «✔ Clave válida para este equipo».</p>
+      <p class="nota" id="licencia-nota"></p>
+    </section>
+
+    <noscript><p class="mal">Esta página necesita JavaScript activado para generar tu licencia.</p></noscript>
+  </div>
+  <div class="pie">
+    ¿Dudas? Escríbele a Kevin García a
+    <a href="mailto:kevin.garcia.quant@gmail.com">kevin.garcia.quant@gmail.com</a> o responde al correo de tu compra.
+    <p class="riesgo">Herramienta de ejecución para NinjaTrader 8. No da señales ni garantiza resultados. Operar
+      futuros implica riesgo de pérdida: pruébalo primero en una cuenta de simulación.</p>
+  </div>
+</main>
+<script>
+(function () {
+  'use strict';
+
+  // La URL de la aplicacion web de Apps Script (Implementar -> Gestionar implementaciones; termina en /exec).
+  // Se rellena al publicar la pagina. Mientras no sea una URL de Apps Script, la pagina no llama a nada.
+  var URL_APP = 'https://script.google.com/macros/s/AKfycbzJDbtE4cmAYXfs3OGD9AsQ_hZkZHXhfV3McWUOXXTncDvaQoNag1CnyEvhdggXJQX2/exec';
+
+  var ESPERA_MAXIMA_MS = 90000;
+  var SECCIONES = ['cargando', 'aviso', 'activar', 'licencia'];
+  var SIN_RED = 'No pude hablar con el servidor de licencias. Revisa tu conexión a internet y vuelve a intentarlo.';
+
+  var token = '';
+  var licencia = '';
+  var enviando = false;
+
+  function el(id) { return document.getElementById(id); }
+
+  function mostrar(cual) {
+    SECCIONES.forEach(function (s) { el(s).hidden = s !== cual; });
+  }
+
+  function aviso(titulo, texto, clase) {
+    el('aviso-titulo').textContent = titulo;
+    el('aviso-texto').textContent = texto;
+    el('aviso-texto').className = clase || '';
+    mostrar('aviso');
+  }
+
+  function appConfigurada() {
+    return /^https:\/\/script\.google\.com\/(a\/[^\/\s]+\/)?macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(URL_APP);
+  }
+
+  /** GET a la API sin cookies (credentials: 'omit'): asi Google no mete /u/N/ por tener varias cuentas. */
+  function llamar(parametros) {
+    var qs = Object.keys(parametros).map(function (k) {
+      return encodeURIComponent(k) + '=' + encodeURIComponent(parametros[k]);
+    }).join('&');
+    var control = typeof AbortController === 'function' ? new AbortController() : null;
+    var reloj = control ? setTimeout(function () { control.abort(); }, ESPERA_MAXIMA_MS) : null;
+    function fin() { if (reloj) clearTimeout(reloj); }
+    // Nada de cabeceras propias: una peticion "simple" no lleva pregunta previa (preflight) de CORS.
+    var opciones = { method: 'GET', credentials: 'omit', redirect: 'follow' };
+    if (control) opciones.signal = control.signal;
+    return fetch(URL_APP + '?' + qs, opciones)
+      .then(function (r) { return r.text(); })
+      .then(function (t) {
+        fin();
+        var o = null;
+        try { o = JSON.parse(t); } catch (e) { o = null; }
+        if (!o || typeof o !== 'object' || typeof o.ok !== 'boolean') throw new Error('respuesta ilegible');
+        return o;
+      }, function (e) { fin(); throw e; });
+  }
+
+  /** Igual que normalizarIdNinja_ de Codigo.gs: mismo formato y mismos mensajes. */
+  function revisarId(texto) {
+    var limpio = String(texto == null ? '' : texto).replace(/[\s\-]/g, '');
+    if (!limpio) {
+      return { error: 'Pega el ID de tu computadora: lo ves en el asistente, página «Tu licencia», botón «Copiar ID».' };
+    }
+    if (!/^[0-9A-Za-z]+$/.test(limpio)) {
+      return { error: 'El ID solo lleva números y letras (de la A a la F), en bloques de 8 separados por guiones. ' +
+        'Cópialo con el botón «Copiar ID» del asistente.' };
+    }
+    var mayus = limpio.toUpperCase();
+    if (!/^[0-9A-F]+$/.test(mayus)) {
+      return { error: 'Ese ID tiene letras que no existen en un ID de NinjaTrader (solo van de la A a la F' +
+        (/[O]/.test(mayus) ? '; la «O» es un cero' : '') + '). Cópialo con el botón «Copiar ID» del asistente.' };
+    }
+    if (mayus.length !== 32) {
+      return { error: 'El ID tiene ' + mayus.length + ' caracteres y tiene que tener 32 (4 bloques de 8). ' +
+        'Cópialo entero con el botón «Copiar ID» del asistente.' };
+    }
+    return { id: mayus };
+  }
+
+  function formatear(id) { return (String(id).match(/.{1,8}/g) || []).join('-'); }
+
+  function eco() {
+    var t = el('id').value.replace(/[\s\-]/g, '').toUpperCase();
+    if (!t) { el('eco').textContent = ' '; return; }
+    el('eco').textContent = (/^[0-9A-F]{32}$/.test(t) ? '✔ ' : '✖ ') + formatear(t) + '  (' + t.length + ' de 32 caracteres)';
+  }
+
+  function errorFormulario(texto) {
+    el('error-form').textContent = texto;
+    el('error-form').hidden = !texto;
+  }
+
+  function ocupado(si) {
+    enviando = si;
+    el('generar').disabled = si;
+    el('generar').textContent = si ? 'Generando tu licencia…' : 'Generar mi licencia';
+  }
+
+  function mostrarFormulario() {
+    errorFormulario('');
+    mostrar('activar');
+  }
+
+  function mostrarLicencia(r) {
+    licencia = r.licencia;
+    el('clave').value = licencia;
+    el('licencia-para').textContent = 'Licencia ' + (r.repetida ? '(la misma de antes) ' : '') +
+      'para la computadora ' + r.id + '.';
+    el('licencia-nota').textContent = 'Activaciones usadas: ' + r.usadas + ' de ' + r.maximo + '. ' + (r.mensaje || '');
+    mostrar('licencia');
+  }
+
+  function confirmar(sesion) {
+    el('cargando-texto').textContent = 'Confirmando tu pago con Stripe…';
+    mostrar('cargando');
+    llamar({ api: 'confirmar', s: sesion }).then(function (r) {
+      if (r.ok && /^[a-f0-9]{32}$/.test(String(r.token || ''))) {
+        token = r.token;
+        try { history.replaceState(null, '', location.pathname + '?t=' + token); } catch (e) { /* sin historial */ }
+        el('activar-titulo').textContent = r.nombre ? '¡Listo, ' + r.nombre + '!' : '¡Listo!';
+        el('activar-intro').textContent = r.mensaje || 'Tu pago está confirmado.';
+        el('activar-intro').hidden = false;
+        el('activar-sub').hidden = false;
+        el('activar-despues').hidden = false;
+        mostrarFormulario();
+      } else if (r.motivo === 'en_proceso') {
+        aviso('Tu pago está en proceso', r.mensaje, '');
+      } else {
+        aviso('No pudimos confirmar tu pago', r.mensaje || SIN_RED, 'mal');
+      }
+    }, function () {
+      aviso('Sin conexión', SIN_RED + ' Si ya pagaste, el correo con tu enlace de activación te llega igual.', 'mal');
+    });
+  }
+
+  function generar(ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (enviando) return;
+    var r = revisarId(el('id').value);
+    if (r.error) return errorFormulario(r.error);
+    if (!el('confirmo').checked) {
+      return errorFormulario('Marca la casilla para confirmar que es el ID de la computadora donde vas a usar GhostLimit.');
+    }
+    errorFormulario('');
+    ocupado(true);
+    llamar({ api: 'activar', t: token, id: formatear(r.id) }).then(function (x) {
+      ocupado(false);
+      if (x.ok && typeof x.licencia === 'string' && /^GL1\./.test(x.licencia)) return mostrarLicencia(x);
+      if (x.motivo === 'id') return errorFormulario(x.mensaje);
+      if (x.motivo === 'limite') return aviso('Sin activaciones disponibles', x.mensaje, 'mal');
+      if (x.motivo === 'firma') return aviso('Un momento', x.mensaje, '');
+      if (x.motivo === 'enlace' || x.motivo === 'bloqueada') return aviso('No se puede activar', x.mensaje, 'mal');
+      errorFormulario(x.mensaje || SIN_RED);
+    }, function () {
+      ocupado(false);
+      errorFormulario(SIN_RED + ' Con el mismo ID no se gasta otra activación.');
+    });
+  }
+
+  function copiar() {
+    var boton = el('copiar');
+    var k = el('clave');
+    function hecho() { boton.textContent = 'Copiada ✔'; }
+    function aMano() {
+      k.focus();
+      k.select();
+      try { if (document.execCommand('copy')) return hecho(); } catch (e) { /* sin portapapeles */ }
+      boton.textContent = 'Selecciónala y pulsa Ctrl+C';
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(k.value).then(hecho, aMano);
+    else aMano();
+  }
+
+  /** El mismo archivo que llega adjunto al correo: la clave y un salto de linea de Windows. */
+  function descargar() {
+    if (!licencia) return;
+    var url = URL.createObjectURL(new Blob([licencia + '\r\n'], { type: 'text/plain' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'licencia.ghostlimit';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function iniciar() {
+    el('formulario').addEventListener('submit', generar);
+    el('id').addEventListener('input', eco);
+    el('copiar').addEventListener('click', copiar);
+    el('descargar').addEventListener('click', descargar);
+
+    var q = new URLSearchParams(location.search);
+    var sesion = (q.get('s') || '').trim();
+    var t = (q.get('t') || '').trim();
+    if (!appConfigurada()) {
+      return aviso('Página sin configurar', 'Esta página de activación todavía no está lista. Escríbele a Kevin ' +
+        '(abajo) y te manda tu licencia.', 'mal');
+    }
+    if (sesion) return confirmar(sesion);
+    if (t) {
+      if (!/^[a-f0-9]{32}$/.test(t)) {
+        return aviso('Enlace no válido', 'Este enlace de activación no es válido. Ábrelo tal cual desde el ' +
+          'botón «Activa tu licencia» del correo de tu compra.', 'mal');
+      }
+      token = t;
+      return mostrarFormulario();
+    }
+    aviso('Activa tu licencia', 'Entra con el botón «Activa tu licencia» del correo que te llegó al comprar.', '');
+  }
+
+  iniciar();
+})();
+</script>
+</body>
+</html>
